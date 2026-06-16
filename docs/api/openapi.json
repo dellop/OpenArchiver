@@ -2567,7 +2567,7 @@
 		"/v1/search": {
 			"get": {
 				"summary": "Search archived emails",
-				"description": "Performs a full-text search across indexed archived emails using Meilisearch. Requires `search:archive` permission.",
+				"description": "Performs a full-text search across indexed archived emails using Meilisearch. Requires `search:archive` permission. Use `keywords` for global search, or one field-specific text parameter (`subject`, `body`, `attachmentFilename`, or `attachmentContent`). Requests with more than one text search parameter are rejected.",
 				"operationId": "searchEmails",
 				"tags": ["Search"],
 				"security": [
@@ -2582,11 +2582,117 @@
 					{
 						"name": "keywords",
 						"in": "query",
-						"required": true,
-						"description": "The search query string.",
+						"required": false,
+						"description": "Global search query string across searchable email fields.",
 						"schema": {
 							"type": "string",
 							"example": "invoice Q4"
+						}
+					},
+					{
+						"name": "from",
+						"in": "query",
+						"required": false,
+						"description": "Exact sender email address filter. Input is trimmed and lowercased.",
+						"schema": {
+							"type": "string",
+							"format": "email",
+							"example": "sender@example.com"
+						}
+					},
+					{
+						"name": "to",
+						"in": "query",
+						"required": false,
+						"description": "Exact recipient email address filter. Input is trimmed and lowercased.",
+						"schema": {
+							"type": "string",
+							"format": "email",
+							"example": "recipient@example.com"
+						}
+					},
+					{
+						"name": "cc",
+						"in": "query",
+						"required": false,
+						"description": "Exact CC recipient email address filter. Input is trimmed and lowercased.",
+						"schema": {
+							"type": "string",
+							"format": "email",
+							"example": "copy@example.com"
+						}
+					},
+					{
+						"name": "bcc",
+						"in": "query",
+						"required": false,
+						"description": "Exact BCC recipient email address filter. Input is trimmed and lowercased.",
+						"schema": {
+							"type": "string",
+							"format": "email",
+							"example": "hidden@example.com"
+						}
+					},
+					{
+						"name": "subject",
+						"in": "query",
+						"required": false,
+						"description": "Search only the email subject. Cannot be combined with `keywords` or other field-specific text parameters.",
+						"schema": {
+							"type": "string",
+							"example": "quarterly report"
+						}
+					},
+					{
+						"name": "body",
+						"in": "query",
+						"required": false,
+						"description": "Search only the email body. Cannot be combined with `keywords` or other field-specific text parameters.",
+						"schema": {
+							"type": "string",
+							"example": "contract renewal"
+						}
+					},
+					{
+						"name": "attachmentFilename",
+						"in": "query",
+						"required": false,
+						"description": "Search only attachment filenames. Cannot be combined with `keywords` or other field-specific text parameters.",
+						"schema": {
+							"type": "string",
+							"example": "invoice.pdf"
+						}
+					},
+					{
+						"name": "attachmentContent",
+						"in": "query",
+						"required": false,
+						"description": "Search only extracted attachment content. Cannot be combined with `keywords` or other field-specific text parameters.",
+						"schema": {
+							"type": "string",
+							"example": "purchase order"
+						}
+					},
+					{
+						"name": "dateFrom",
+						"in": "query",
+						"required": false,
+						"description": "Include emails sent on or after this date.",
+						"schema": {
+							"type": "string",
+							"format": "date",
+							"example": "2026-01-01"
+						}
+					},
+					{
+						"name": "dateTo",
+						"in": "query",
+						"required": false,
+						"description": "Include emails sent on or before this date.",
+						"schema": {
+							"type": "string",
+							"format": "date",
+							"example": "2026-01-31"
 						}
 					},
 					{
@@ -2635,7 +2741,7 @@
 						}
 					},
 					"400": {
-						"description": "Keywords parameter is required.",
+						"description": "Search criteria are missing or invalid.",
 						"content": {
 							"application/json": {
 								"schema": {

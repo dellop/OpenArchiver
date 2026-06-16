@@ -10,7 +10,6 @@ import type {
 } from '@open-archiver/types';
 import { FilterBuilder } from './FilterBuilder';
 import { AuditService } from './AuditService';
-import { IngestionService } from './IngestionService';
 
 const FIELD_SEARCH_ATTRIBUTES = new Set([
 	'subject',
@@ -18,6 +17,23 @@ const FIELD_SEARCH_ATTRIBUTES = new Set([
 	'attachments.filename',
 	'attachments.content',
 ]);
+const FILTER_ATTRIBUTES = new Set([
+	'from',
+	'to',
+	'cc',
+	'bcc',
+	'timestamp',
+	'ingestionSourceId',
+	'userEmail',
+]);
+const ADDRESS_FILTER_ATTRIBUTES = new Set(['from', 'to', 'cc', 'bcc', 'userEmail']);
+
+export class SearchValidationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'SearchValidationError';
+	}
+}
 
 export class SearchService {
 	private client: MeiliSearch;
@@ -103,6 +119,12 @@ export class SearchService {
 		let processingTimeMs: number;
 
 		const safeFieldQueries = this.getSafeFieldQueries(fieldQueries);
+		const textQueryCount = (query ? 1 : 0) + safeFieldQueries.length;
+		if (textQueryCount > 1) {
+			throw new SearchValidationError(
+				'Provide only one text search parameter: keywords, subject, body, attachmentFilename, or attachmentContent.'
+			);
+		}
 
 		if (safeFieldQueries.length === 1 && !query) {
 			const fieldQuery = safeFieldQueries[0];
@@ -115,18 +137,6 @@ export class SearchService {
 			hits = searchResults.hits;
 			total = searchResults.estimatedTotalHits ?? searchResults.hits.length;
 			processingTimeMs = searchResults.processingTimeMs;
-		} else if (safeFieldQueries.length) {
-			const advancedResults = await this.searchWithFieldQueries(
-				index,
-				query,
-				safeFieldQueries,
-				searchParams,
-				page,
-				limit
-			);
-			hits = advancedResults.hits;
-			total = advancedResults.total;
-			processingTimeMs = advancedResults.processingTimeMs;
 		} else {
 			const searchResults = await index.search(query, {
 				...searchParams,
@@ -168,9 +178,18 @@ export class SearchService {
 	private getSafeFieldQueries(
 		fieldQueries: SearchQuery['fieldQueries']
 	): NonNullable<SearchQuery['fieldQueries']> {
-		return (fieldQueries ?? []).filter((fieldQuery) =>
-			FIELD_SEARCH_ATTRIBUTES.has(fieldQuery.attribute)
-		);
+		const safeFieldQueries: NonNullable<SearchQuery['fieldQueries']> = [];
+
+		for (const fieldQuery of fieldQueries ?? []) {
+			if (!FIELD_SEARCH_ATTRIBUTES.has(fieldQuery.attribute)) {
+				throw new SearchValidationError(
+					`Unsupported field search attribute: ${fieldQuery.attribute}`
+				);
+			}
+			safeFieldQueries.push(fieldQuery);
+		}
+
+		return safeFieldQueries;
 	}
 
 	private async buildFilter(
@@ -181,8 +200,13 @@ export class SearchService {
 
 		if (filters) {
 			for (const [key, value] of Object.entries(filters)) {
+				if (!FILTER_ATTRIBUTES.has(key)) {
+					throw new SearchValidationError(`Unsupported search filter: ${key}`);
+				}
+
 				// Expand ingestionSourceId to the full merge group
 				if (key === 'ingestionSourceId' && typeof value === 'string') {
+					const { IngestionService } = await import('./IngestionService');
 					const groupIds = await IngestionService.findGroupSourceIds(value);
 					if (groupIds.length === 1) {
 						filterParts.push(
@@ -203,7 +227,9 @@ export class SearchService {
 						filterParts.push(`timestamp <= ${range.to}`);
 					}
 				} else if (typeof value === 'string') {
-					filterParts.push(`${key} = '${this.escapeFilterValue(value)}'`);
+					filterParts.push(
+						`${key} = '${this.escapeFilterValue(this.normalizeFilterValue(key, value))}'`
+					);
 				} else {
 					filterParts.push(`${key} = ${value}`);
 				}
@@ -220,58 +246,21 @@ export class SearchService {
 		return filterParts.length ? filterParts.join(' AND ') : undefined;
 	}
 
-	private async searchWithFieldQueries(
-		index: Index<EmailDocument>,
-		query: string,
-		fieldQueries: NonNullable<SearchQuery['fieldQueries']>,
-		searchParams: SearchParams,
-		page: number,
-		limit: number
-	): Promise<Pick<SearchResult, 'hits' | 'total' | 'processingTimeMs'>> {
-		const maxCandidates = 1000;
-		const searches = [
-			...(query ? [{ query, attributesToSearchOn: searchParams.attributesToSearchOn }] : []),
-			...fieldQueries.map((fieldQuery) => ({
-				query: fieldQuery.query,
-				attributesToSearchOn: [fieldQuery.attribute],
-			})),
-		];
-
-		const results = await Promise.all(
-			searches.map((search) =>
-				index.search(search.query, {
-					...searchParams,
-					attributesToSearchOn: search.attributesToSearchOn,
-					limit: maxCandidates,
-					offset: 0,
-				})
-			)
-		);
-
-		const idSets = results.map((result) => new Set(result.hits.map((hit) => String(hit.id))));
-		const primaryResult = results.reduce((smallest, result) => {
-			const smallestTotal = smallest.estimatedTotalHits ?? smallest.hits.length;
-			const resultTotal = result.estimatedTotalHits ?? result.hits.length;
-			return resultTotal < smallestTotal ? result : smallest;
-		}, results[0]);
-
-		const matchedHits = primaryResult.hits.filter((hit) =>
-			idSets.every((idSet) => idSet.has(String(hit.id)))
-		);
-		const offset = (page - 1) * limit;
-
-		return {
-			hits: matchedHits.slice(offset, offset + limit),
-			total: matchedHits.length,
-			processingTimeMs: results.reduce(
-				(totalMs, result) => totalMs + result.processingTimeMs,
-				0
-			),
-		};
-	}
-
 	private escapeFilterValue(value: string): string {
 		return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+	}
+
+	private normalizeFilterValue(key: string, value: string): string {
+		const trimmed = value.trim();
+		return ADDRESS_FILTER_ATTRIBUTES.has(key) ? trimmed.toLowerCase() : trimmed;
+	}
+
+	public static normalizeEmailAddress(value: string): string {
+		return value.trim().toLowerCase();
+	}
+
+	public static normalizeEmailAddresses(values: string[]): string[] {
+		return values.map((value) => SearchService.normalizeEmailAddress(value)).filter(Boolean);
 	}
 
 	public async getTopSenders(limit = 10): Promise<TopSender[]> {

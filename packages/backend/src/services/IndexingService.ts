@@ -364,11 +364,17 @@ export class IndexingService {
 		// console.log('email.userEmail', userEmail);
 		return {
 			id: archivedEmailId,
-			userEmail: userEmail,
-			from: email.from[0]?.address,
-			to: email.to.map((i: EmailAddress) => i.address) || [],
-			cc: email.cc?.map((i: EmailAddress) => i.address) || [],
-			bcc: email.bcc?.map((i: EmailAddress) => i.address) || [],
+			userEmail: SearchService.normalizeEmailAddress(userEmail),
+			from: SearchService.normalizeEmailAddress(email.from[0]?.address || ''),
+			to: SearchService.normalizeEmailAddresses(
+				email.to?.map((i: EmailAddress) => i.address) || []
+			),
+			cc: SearchService.normalizeEmailAddresses(
+				email.cc?.map((i: EmailAddress) => i.address) || []
+			),
+			bcc: SearchService.normalizeEmailAddresses(
+				email.bcc?.map((i: EmailAddress) => i.address) || []
+			),
 			subject: email.subject || '',
 			body: email.body || email.html || '',
 			attachments: extractedAttachments,
@@ -409,11 +415,11 @@ export class IndexingService {
 		// console.log('email.userEmail', email.userEmail);
 		return {
 			id: email.id,
-			userEmail: userEmail,
-			from: email.senderEmail,
-			to: recipients.to?.map((r) => r.address) || [],
-			cc: recipients.cc?.map((r) => r.address) || [],
-			bcc: recipients.bcc?.map((r) => r.address) || [],
+			userEmail: SearchService.normalizeEmailAddress(userEmail),
+			from: SearchService.normalizeEmailAddress(email.senderEmail),
+			to: SearchService.normalizeEmailAddresses(recipients.to?.map((r) => r.address) || []),
+			cc: SearchService.normalizeEmailAddresses(recipients.cc?.map((r) => r.address) || []),
+			bcc: SearchService.normalizeEmailAddresses(recipients.bcc?.map((r) => r.address) || []),
 			subject: email.subject || '',
 			body: emailBodyText,
 			attachments: attachmentContents,
@@ -533,11 +539,11 @@ export class IndexingService {
 	private ensureEmailDocumentFields(doc: Partial<EmailDocument>): EmailDocument {
 		return {
 			id: doc.id || 'missing-id',
-			userEmail: doc.userEmail || 'unknown',
-			from: doc.from || '',
-			to: Array.isArray(doc.to) ? doc.to : [],
-			cc: Array.isArray(doc.cc) ? doc.cc : [],
-			bcc: Array.isArray(doc.bcc) ? doc.bcc : [],
+			userEmail: SearchService.normalizeEmailAddress(doc.userEmail || 'unknown'),
+			from: SearchService.normalizeEmailAddress(doc.from || ''),
+			to: SearchService.normalizeEmailAddresses(Array.isArray(doc.to) ? doc.to : []),
+			cc: SearchService.normalizeEmailAddresses(Array.isArray(doc.cc) ? doc.cc : []),
+			bcc: SearchService.normalizeEmailAddresses(Array.isArray(doc.bcc) ? doc.bcc : []),
 			subject: doc.subject || '',
 			body: doc.body || '',
 			attachments: Array.isArray(doc.attachments) ? doc.attachments : [],

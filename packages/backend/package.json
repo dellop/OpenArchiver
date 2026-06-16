@@ -10,9 +10,10 @@
 		"./*": "./dist/*.js"
 	},
 	"scripts": {
-		"build": "tsc && pnpm copy-assets",
+		"build": "tsc && node scripts/copy-assets.mjs",
+		"test": "tsc && node scripts/run-tests.mjs",
 		"dev": "tsc --watch",
-		"copy-assets": "cp -r src/locales dist/locales",
+		"copy-assets": "node scripts/copy-assets.mjs",
 		"start:ingestion-worker": "node dist/workers/ingestion.worker.js",
 		"start:indexing-worker": "node dist/workers/indexing.worker.js",
 		"start:sync-scheduler": "node dist/jobs/schedulers/sync-scheduler.js",

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { SearchService } from '../../services/SearchService';
+import { SearchService, SearchValidationError } from '../../services/SearchService';
 import { MatchingStrategies } from 'meilisearch';
 import type { MatchingStrategy } from '@open-archiver/types';
 
@@ -43,6 +43,14 @@ export class SearchController {
 			const keywordQuery = this.cleanString(keywords);
 			const addressFilters = this.getAddressFilters(req.query);
 			const fieldSearch = this.getFieldSearch(req.query);
+			if ((keywordQuery ? 1 : 0) + fieldSearch.length > 1) {
+				res.status(400).json({
+					message:
+						'Provide only one text search parameter: keywords, subject, body, attachmentFilename, or attachmentContent.',
+				});
+				return;
+			}
+
 			const dateRange = this.getDateRange(dateFrom, dateTo);
 			if (dateRange.invalid) {
 				res.status(400).json({ message: 'Invalid date range.' });
@@ -84,7 +92,7 @@ export class SearchController {
 			res.status(200).json(results);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : req.t('errors.unknown');
-			res.status(500).json({ message });
+			res.status(error instanceof SearchValidationError ? 400 : 500).json({ message });
 		}
 	};
 
@@ -108,7 +116,7 @@ export class SearchController {
 		return ADDRESS_FILTER_PARAMS.reduce<Record<string, string>>((filters, key) => {
 			const value = this.cleanString(query[key]);
 			if (value) {
-				filters[key] = value;
+				filters[key] = SearchService.normalizeEmailAddress(value);
 			}
 			return filters;
 		}, {});
