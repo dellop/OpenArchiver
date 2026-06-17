@@ -1,9 +1,18 @@
 import { Request, Response } from 'express';
 import { SearchService, SearchValidationError } from '../../services/SearchService';
 import { MatchingStrategies } from 'meilisearch';
-import type { MatchingStrategy } from '@open-archiver/types';
+import type { MatchingStrategy, SearchSortBy, SearchSortDirection } from '@open-archiver/types';
 
 const ALLOWED_MATCHING_STRATEGIES = new Set<MatchingStrategy>(['last', 'all', 'frequency']);
+const ALLOWED_SORT_FIELDS = new Set<SearchSortBy>([
+	'timestamp',
+	'subject',
+	'from',
+	'toSort',
+	'userEmail',
+	'attachmentCount',
+]);
+const ALLOWED_SORT_DIRECTIONS = new Set<SearchSortDirection>(['asc', 'desc']);
 const ADDRESS_FILTER_PARAMS = ['from', 'to', 'cc', 'bcc'] as const;
 const FIELD_SEARCH_PARAMS = {
 	subject: 'subject',
@@ -32,7 +41,16 @@ export class SearchController {
 
 	public search = async (req: Request, res: Response): Promise<void> => {
 		try {
-			const { keywords, page, limit, matchingStrategy, dateFrom, dateTo } = req.query;
+			const {
+				keywords,
+				page,
+				limit,
+				matchingStrategy,
+				dateFrom,
+				dateTo,
+				sortBy,
+				sortDirection,
+			} = req.query;
 			const userId = req.user?.sub;
 
 			if (!userId) {
@@ -74,6 +92,8 @@ export class SearchController {
 			}
 
 			const safeMatchingStrategy = this.getMatchingStrategy(matchingStrategy);
+			const safeSortBy = this.getSortBy(sortBy);
+			const safeSortDirection = this.getSortDirection(sortDirection);
 
 			const results = await this.searchService.searchEmails(
 				{
@@ -84,6 +104,8 @@ export class SearchController {
 					page: this.getPositiveInteger(page, 1),
 					limit: Math.min(this.getPositiveInteger(limit, 25), 500),
 					matchingStrategy: safeMatchingStrategy as MatchingStrategies,
+					sortBy: safeSortBy,
+					sortDirection: safeSortDirection,
 				},
 				userId,
 				req.ip || 'unknown'
@@ -110,6 +132,16 @@ export class SearchController {
 	private getMatchingStrategy(value: unknown): MatchingStrategy {
 		const strategy = this.cleanString(value) as MatchingStrategy;
 		return ALLOWED_MATCHING_STRATEGIES.has(strategy) ? strategy : 'last';
+	}
+
+	private getSortBy(value: unknown): SearchSortBy {
+		const sortBy = this.cleanString(value) as SearchSortBy;
+		return ALLOWED_SORT_FIELDS.has(sortBy) ? sortBy : 'timestamp';
+	}
+
+	private getSortDirection(value: unknown): SearchSortDirection {
+		const sortDirection = this.cleanString(value) as SearchSortDirection;
+		return ALLOWED_SORT_DIRECTIONS.has(sortDirection) ? sortDirection : 'desc';
 	}
 
 	private getAddressFilters(query: Request['query']): Record<string, string> {

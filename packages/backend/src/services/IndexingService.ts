@@ -369,6 +369,9 @@ export class IndexingService {
 			to: SearchService.normalizeEmailAddresses(
 				email.to?.map((i: EmailAddress) => i.address) || []
 			),
+			toSort: SearchService.normalizeEmailAddresses(
+				email.to?.map((i: EmailAddress) => i.address) || []
+			).join(', '),
 			cc: SearchService.normalizeEmailAddresses(
 				email.cc?.map((i: EmailAddress) => i.address) || []
 			),
@@ -378,6 +381,7 @@ export class IndexingService {
 			subject: email.subject || '',
 			body: email.body || email.html || '',
 			attachments: extractedAttachments,
+			attachmentCount: extractedAttachments.length,
 			timestamp: new Date(email.receivedAt).getTime(),
 			ingestionSourceId: ingestionSourceId,
 		};
@@ -412,17 +416,20 @@ export class IndexingService {
 		}
 
 		const recipients = email.recipients as DbRecipients;
+		const to = SearchService.normalizeEmailAddresses(recipients.to?.map((r) => r.address) || []);
 		// console.log('email.userEmail', email.userEmail);
 		return {
 			id: email.id,
 			userEmail: SearchService.normalizeEmailAddress(userEmail),
 			from: SearchService.normalizeEmailAddress(email.senderEmail),
-			to: SearchService.normalizeEmailAddresses(recipients.to?.map((r) => r.address) || []),
+			to,
+			toSort: to.join(', '),
 			cc: SearchService.normalizeEmailAddresses(recipients.cc?.map((r) => r.address) || []),
 			bcc: SearchService.normalizeEmailAddresses(recipients.bcc?.map((r) => r.address) || []),
 			subject: email.subject || '',
 			body: emailBodyText,
 			attachments: attachmentContents,
+			attachmentCount: attachmentContents.length,
 			timestamp: new Date(email.sentAt).getTime(),
 			ingestionSourceId: email.ingestionSourceId,
 		};
@@ -542,11 +549,23 @@ export class IndexingService {
 			userEmail: SearchService.normalizeEmailAddress(doc.userEmail || 'unknown'),
 			from: SearchService.normalizeEmailAddress(doc.from || ''),
 			to: SearchService.normalizeEmailAddresses(Array.isArray(doc.to) ? doc.to : []),
+			toSort:
+				typeof doc.toSort === 'string'
+					? doc.toSort
+					: SearchService.normalizeEmailAddresses(Array.isArray(doc.to) ? doc.to : []).join(
+							', '
+						),
 			cc: SearchService.normalizeEmailAddresses(Array.isArray(doc.cc) ? doc.cc : []),
 			bcc: SearchService.normalizeEmailAddresses(Array.isArray(doc.bcc) ? doc.bcc : []),
 			subject: doc.subject || '',
 			body: doc.body || '',
 			attachments: Array.isArray(doc.attachments) ? doc.attachments : [],
+			attachmentCount:
+				typeof doc.attachmentCount === 'number'
+					? doc.attachmentCount
+					: Array.isArray(doc.attachments)
+						? doc.attachments.length
+						: 0,
 			timestamp: typeof doc.timestamp === 'number' ? doc.timestamp : Date.now(),
 			ingestionSourceId: doc.ingestionSourceId || 'unknown',
 		};

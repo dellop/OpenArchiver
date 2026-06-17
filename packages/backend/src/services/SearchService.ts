@@ -7,6 +7,8 @@ import type {
 	SearchHit,
 	TopSender,
 	User,
+	SearchSortBy,
+	SearchSortDirection,
 } from '@open-archiver/types';
 import { FilterBuilder } from './FilterBuilder';
 import { AuditService } from './AuditService';
@@ -27,6 +29,15 @@ const FILTER_ATTRIBUTES = new Set([
 	'userEmail',
 ]);
 const ADDRESS_FILTER_ATTRIBUTES = new Set(['from', 'to', 'cc', 'bcc', 'userEmail']);
+const SORTABLE_ATTRIBUTES = new Set<SearchSortBy>([
+	'timestamp',
+	'subject',
+	'from',
+	'toSort',
+	'userEmail',
+	'attachmentCount',
+]);
+const SORT_DIRECTIONS = new Set<SearchSortDirection>(['asc', 'desc']);
 
 export class SearchValidationError extends Error {
 	constructor(message: string) {
@@ -95,13 +106,17 @@ export class SearchService {
 			page = 1,
 			limit = 10,
 			matchingStrategy = 'last',
+			sortBy = 'timestamp',
+			sortDirection = 'desc',
 		} = dto;
 		const index = await this.getIndex<EmailDocument>('emails');
+		const safeSortBy = SORTABLE_ATTRIBUTES.has(sortBy) ? sortBy : 'timestamp';
+		const safeSortDirection = SORT_DIRECTIONS.has(sortDirection) ? sortDirection : 'desc';
 
 		const searchParams: SearchParams = {
 			attributesToHighlight: ['*'],
 			showMatchesPosition: true,
-			sort: ['timestamp:desc'],
+			sort: [`${safeSortBy}:${safeSortDirection}`],
 			matchingStrategy,
 		};
 
@@ -160,6 +175,8 @@ export class SearchService {
 				page,
 				limit,
 				matchingStrategy,
+				sortBy: safeSortBy,
+				sortDirection: safeSortDirection,
 				attributesToSearchOn,
 				fieldQueries: safeFieldQueries,
 			},
@@ -306,7 +323,17 @@ export class SearchService {
 				'ingestionSourceId',
 				'userEmail',
 			],
-			sortableAttributes: ['timestamp'],
+			sortableAttributes: [
+				'timestamp',
+				'subject',
+				'from',
+				'toSort',
+				'userEmail',
+				'attachmentCount',
+			],
+			pagination: {
+				maxTotalHits: config.meili.maxTotalHits,
+			},
 		});
 	}
 }
