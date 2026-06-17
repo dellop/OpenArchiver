@@ -9,4 +9,7 @@ export const meiliConfig = {
 	indexingBatchSize: process.env.MEILI_INDEXING_BATCH
 		? parseInt(process.env.MEILI_INDEXING_BATCH)
 		: 500,
+	maxTotalHits: process.env.MEILI_MAX_TOTAL_HITS
+		? parseInt(process.env.MEILI_MAX_TOTAL_HITS)
+		: 500000,
 };

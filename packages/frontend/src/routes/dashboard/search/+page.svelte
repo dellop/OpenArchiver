@@ -4,10 +4,18 @@
 	import { Input } from '$lib/components/ui/input';
 	import * as Select from '$lib/components/ui/select';
 	import * as Table from '$lib/components/ui/table';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { Skeleton } from '$lib/components/ui/skeleton';
-	import type { MatchingStrategy } from '@open-archiver/types';
+	import { api } from '$lib/api.client';
+	import EmailPreview from '$lib/components/custom/EmailPreview.svelte';
+	import type {
+		ArchivedEmail,
+		MatchingStrategy,
+		SearchSortBy,
+		SearchSortDirection,
+	} from '@open-archiver/types';
 	import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { t } from '$lib/translations';
@@ -16,6 +24,12 @@
 	import ChevronLeft from 'lucide-svelte/icons/chevron-left';
 	import ChevronRight from 'lucide-svelte/icons/chevron-right';
 	import SlidersHorizontal from 'lucide-svelte/icons/sliders-horizontal';
+	import ArrowUpDown from 'lucide-svelte/icons/arrow-up-down';
+	import ArrowUp from 'lucide-svelte/icons/arrow-up';
+	import ArrowDown from 'lucide-svelte/icons/arrow-down';
+	import Columns3 from 'lucide-svelte/icons/columns-3';
+	import X from 'lucide-svelte/icons/x';
+	import { browser } from '$app/environment';
 
 	let { data }: { data: PageData } = $props();
 	let searchResult = $derived(data.searchResult);
@@ -32,6 +46,10 @@
 	let dateTo = $state(data.searchParams?.dateTo || '');
 	let page = $derived(data.page);
 	let limit = $state(data.limit?.toString() || data.searchParams?.limit || '25');
+	let sortBy: SearchSortBy = $state((data.sortBy as SearchSortBy) || 'timestamp');
+	let sortDirection: SearchSortDirection = $state(
+		(data.sortDirection as SearchSortDirection) || 'desc'
+	);
 	let error = $derived(data.error);
 	let matchingStrategy: MatchingStrategy = $state(
 		(data.matchingStrategy as MatchingStrategy) || 'last'
@@ -61,10 +79,51 @@
 			$t('app.search.select_strategy')
 	);
 	const MAX_PAGE_SIZE = 500;
+	type ColumnId = 'date' | 'subject' | 'from' | 'to' | 'mailbox' | 'attachments';
+	const DEFAULT_COLUMNS: ColumnId[] = ['date', 'subject', 'from', 'to', 'attachments'];
+	const COLUMN_STORAGE_KEY = 'open-archiver.search.visible-columns';
+	const columnOptions: {
+		id: ColumnId;
+		label: string;
+		sortBy?: SearchSortBy;
+		required?: boolean;
+	}[] = [
+		{ id: 'date', label: 'Date', sortBy: 'timestamp' },
+		{ id: 'subject', label: $t('app.search.subject'), sortBy: 'subject', required: true },
+		{ id: 'from', label: $t('app.search.from'), sortBy: 'from' },
+		{ id: 'to', label: $t('app.search.to'), sortBy: 'toSort' },
+		{ id: 'mailbox', label: 'Mailbox', sortBy: 'userEmail' },
+		{ id: 'attachments', label: 'Attachments', sortBy: 'attachmentCount' },
+	];
+	let visibleColumns = $state<ColumnId[]>(DEFAULT_COLUMNS);
+	let previewEmail = $state<ArchivedEmail | null>(null);
+	let previewEmailId = $state('');
+	let previewLoading = $state(false);
+	let previewError = $state('');
 
 	let isMounted = $state(false);
 	onMount(() => {
 		isMounted = true;
+		const storedColumns = localStorage.getItem(COLUMN_STORAGE_KEY);
+		if (storedColumns) {
+			try {
+				const parsed = JSON.parse(storedColumns) as ColumnId[];
+				const validColumns = parsed.filter((column): column is ColumnId =>
+					columnOptions.some((option) => option.id === column)
+				);
+				if (validColumns.includes('subject')) {
+					visibleColumns = validColumns;
+				}
+			} catch {
+				visibleColumns = DEFAULT_COLUMNS;
+			}
+		}
+	});
+
+	$effect(() => {
+		if (browser && visibleColumns.length > 0) {
+			localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColumns));
+		}
 	});
 
 	function shadowRender(node: HTMLElement, html: string | undefined) {
@@ -119,6 +178,8 @@
 		setParam(params, 'dateTo', dateTo);
 		params.set('matchingStrategy', matchingStrategy);
 		params.set('limit', clampLimit(limit).toString());
+		params.set('sortBy', sortBy);
+		params.set('sortDirection', sortDirection);
 		return params;
 	}
 
@@ -138,6 +199,17 @@
 	function pageHref(nextPage: number) {
 		const params = buildSearchParams();
 		params.set('page', nextPage.toString());
+		return `/dashboard/search?${params.toString()}`;
+	}
+
+	function sortHref(columnSortBy: SearchSortBy) {
+		const params = buildSearchParams();
+		const nextDirection =
+			sortBy === columnSortBy ? (sortDirection === 'asc' ? 'desc' : 'asc') : 'asc';
+		const defaultDirection = columnSortBy === 'timestamp' ? 'desc' : nextDirection;
+		params.set('sortBy', columnSortBy);
+		params.set('sortDirection', sortBy === columnSortBy ? nextDirection : defaultDirection);
+		params.set('page', '1');
 		return `/dashboard/search?${params.toString()}`;
 	}
 
@@ -253,6 +325,57 @@
 
 	function formatDate(timestamp: number) {
 		return new Date(timestamp).toLocaleString();
+	}
+
+	function isColumnVisible(column: ColumnId) {
+		return visibleColumns.includes(column);
+	}
+
+	function toggleColumn(column: ColumnId) {
+		const option = columnOptions.find((candidate) => candidate.id === column);
+		if (option?.required) return;
+
+		if (visibleColumns.includes(column)) {
+			visibleColumns = visibleColumns.filter((visibleColumn) => visibleColumn !== column);
+		} else {
+			const orderedColumns = [...visibleColumns, column];
+			visibleColumns = columnOptions
+				.map((candidate) => candidate.id)
+				.filter((candidate) => orderedColumns.includes(candidate));
+		}
+	}
+
+	function getColumnCount() {
+		return visibleColumns.length + 1;
+	}
+
+	async function selectPreview(id: string) {
+		if (previewEmailId === id && previewEmail) return;
+
+		previewEmailId = id;
+		previewEmail = null;
+		previewError = '';
+		previewLoading = true;
+
+		try {
+			const response = await api(`/archived-emails/${id}`);
+			if (!response.ok) {
+				const errorBody = await response.json().catch(() => null);
+				throw new Error(errorBody?.message || 'Failed to load email preview.');
+			}
+			previewEmail = (await response.json()) as ArchivedEmail;
+		} catch (error) {
+			previewError = error instanceof Error ? error.message : 'Failed to load email preview.';
+		} finally {
+			previewLoading = false;
+		}
+	}
+
+	function closePreview() {
+		previewEmailId = '';
+		previewEmail = null;
+		previewError = '';
+		previewLoading = false;
 	}
 </script>
 
@@ -408,6 +531,27 @@
 				{/if}
 			</p>
 			<div class="flex items-center gap-2">
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						<Button type="button" variant="outline" class="h-9">
+							<Columns3 class="h-4 w-4" />
+							Columns
+						</Button>
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content align="end" class="w-48">
+						<DropdownMenu.Label>Show columns</DropdownMenu.Label>
+						<DropdownMenu.Separator />
+						{#each columnOptions as column (column.id)}
+							<DropdownMenu.CheckboxItem
+								checked={isColumnVisible(column.id)}
+								disabled={column.required}
+								onclick={() => toggleColumn(column.id)}
+							>
+								{column.label}
+							</DropdownMenu.CheckboxItem>
+						{/each}
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
 				<label for="search-page-size" class="text-muted-foreground text-sm">
 					Rows
 				</label>
@@ -431,93 +575,278 @@
 			</div>
 		</div>
 
-		<div class="rounded-md border">
-			<Table.Root>
-				<Table.Header>
-					<Table.Row>
-						<Table.Head class="w-[180px]">Date</Table.Head>
-						<Table.Head class="min-w-[320px]">{$t('app.search.subject')}</Table.Head>
-						<Table.Head class="w-[220px]">{$t('app.search.from')}</Table.Head>
-						<Table.Head class="w-[260px]">{$t('app.search.to')}</Table.Head>
-						<Table.Head class="w-[220px]">Mailbox</Table.Head>
-						<Table.Head class="w-[110px]">Attachments</Table.Head>
-						<Table.Head class="w-[90px] text-right">Actions</Table.Head>
-					</Table.Row>
-				</Table.Header>
-				<Table.Body>
-					{#if searchResult.hits.length > 0}
-						{#each searchResult.hits as hit (hit.id)}
-							{@const _formatted = hit._formatted || {}}
-							{@const firstMatch = getFirstMatch(hit)}
-							<Table.Row>
-								<Table.Cell class="text-muted-foreground text-xs">
-									{#if !isMounted}
-										<Skeleton class="h-4 w-32" />
-									{:else}
-										{formatDate(hit.timestamp)}
-									{/if}
-								</Table.Cell>
-								<Table.Cell class="max-w-[520px]">
-									{#if !isMounted}
-										<Skeleton class="h-5 w-3/4" />
-									{:else}
-										<a
-											class="text-foreground block truncate font-medium hover:underline"
-											href="/dashboard/archived-emails/{hit.id}"
-											aria-label={`Open email: ${hit.subject || 'No subject'}`}
-										>
-											<span use:shadowRender={_formatted.subject || hit.subject}></span>
-										</a>
-										{#if firstMatch}
-											<div class="mt-1 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2 text-xs">
-												<span class="text-muted-foreground">{firstMatch.label}:</span>
-												<span
-													class="min-w-0 font-mono text-muted-foreground"
-													use:shadowRender={firstMatch.snippet}
-												></span>
-											</div>
+		<div class:grid={Boolean(previewEmailId)} class:gap-4={Boolean(previewEmailId)} class="xl:grid-cols-[minmax(0,1fr)_minmax(360px,42vw)]">
+			<div class="rounded-md border">
+				<Table.Root>
+					<Table.Header>
+						<Table.Row>
+							{#if isColumnVisible('date')}
+								<Table.Head class="w-[180px]">
+									<a
+										href={sortHref('timestamp')}
+										class="inline-flex items-center gap-1 hover:underline"
+									>
+										Date
+										{#if sortBy === 'timestamp'}
+											{#if sortDirection === 'asc'}
+												<ArrowUp class="h-3.5 w-3.5" />
+											{:else}
+												<ArrowDown class="h-3.5 w-3.5" />
+											{/if}
+										{:else}
+											<ArrowUpDown class="h-3.5 w-3.5" />
 										{/if}
-									{/if}
-								</Table.Cell>
-								<Table.Cell class="max-w-[220px] text-sm">
-									{#if !isMounted}
-										<Skeleton class="h-4 w-36" />
-									{:else}
-										<span use:shadowRender={_formatted.from || hit.from}></span>
-									{/if}
-								</Table.Cell>
-								<Table.Cell class="max-w-[260px] text-sm">
-									{#if !isMounted}
-										<Skeleton class="h-4 w-40" />
-									{:else}
-										<span
-											use:shadowRender={_formatted.to?.join(', ') ||
-												formatRecipients(hit.to)}
-										></span>
-									{/if}
-								</Table.Cell>
-								<Table.Cell class="max-w-[220px] truncate text-sm">
-									{hit.userEmail || '-'}
-								</Table.Cell>
-								<Table.Cell class="text-muted-foreground text-sm">
-									{hit.attachments?.length || 0}
-								</Table.Cell>
-								<Table.Cell class="text-right">
-									<a href="/dashboard/archived-emails/{hit.id}">
-										<Button variant="outline" size="sm">Open</Button>
 									</a>
+								</Table.Head>
+							{/if}
+							<Table.Head class="min-w-[320px]">
+								<a
+									href={sortHref('subject')}
+									class="inline-flex items-center gap-1 hover:underline"
+								>
+									{$t('app.search.subject')}
+									{#if sortBy === 'subject'}
+										{#if sortDirection === 'asc'}
+											<ArrowUp class="h-3.5 w-3.5" />
+										{:else}
+											<ArrowDown class="h-3.5 w-3.5" />
+										{/if}
+									{:else}
+										<ArrowUpDown class="h-3.5 w-3.5" />
+									{/if}
+								</a>
+							</Table.Head>
+							{#if isColumnVisible('from')}
+								<Table.Head class="w-[220px]">
+									<a
+										href={sortHref('from')}
+										class="inline-flex items-center gap-1 hover:underline"
+									>
+										{$t('app.search.from')}
+										{#if sortBy === 'from'}
+											{#if sortDirection === 'asc'}
+												<ArrowUp class="h-3.5 w-3.5" />
+											{:else}
+												<ArrowDown class="h-3.5 w-3.5" />
+											{/if}
+										{:else}
+											<ArrowUpDown class="h-3.5 w-3.5" />
+										{/if}
+									</a>
+								</Table.Head>
+							{/if}
+							{#if isColumnVisible('to')}
+								<Table.Head class="w-[260px]">
+									<a
+										href={sortHref('toSort')}
+										class="inline-flex items-center gap-1 hover:underline"
+									>
+										{$t('app.search.to')}
+										{#if sortBy === 'toSort'}
+											{#if sortDirection === 'asc'}
+												<ArrowUp class="h-3.5 w-3.5" />
+											{:else}
+												<ArrowDown class="h-3.5 w-3.5" />
+											{/if}
+										{:else}
+											<ArrowUpDown class="h-3.5 w-3.5" />
+										{/if}
+									</a>
+								</Table.Head>
+							{/if}
+							{#if isColumnVisible('mailbox')}
+								<Table.Head class="w-[220px]">
+									<a
+										href={sortHref('userEmail')}
+										class="inline-flex items-center gap-1 hover:underline"
+									>
+										Mailbox
+										{#if sortBy === 'userEmail'}
+											{#if sortDirection === 'asc'}
+												<ArrowUp class="h-3.5 w-3.5" />
+											{:else}
+												<ArrowDown class="h-3.5 w-3.5" />
+											{/if}
+										{:else}
+											<ArrowUpDown class="h-3.5 w-3.5" />
+										{/if}
+									</a>
+								</Table.Head>
+							{/if}
+							{#if isColumnVisible('attachments')}
+								<Table.Head class="w-[110px]">
+									<a
+										href={sortHref('attachmentCount')}
+										class="inline-flex items-center gap-1 hover:underline"
+									>
+										Attachments
+										{#if sortBy === 'attachmentCount'}
+											{#if sortDirection === 'asc'}
+												<ArrowUp class="h-3.5 w-3.5" />
+											{:else}
+												<ArrowDown class="h-3.5 w-3.5" />
+											{/if}
+										{:else}
+											<ArrowUpDown class="h-3.5 w-3.5" />
+										{/if}
+									</a>
+								</Table.Head>
+							{/if}
+							<Table.Head class="w-[150px] text-right">Actions</Table.Head>
+						</Table.Row>
+					</Table.Header>
+					<Table.Body>
+						{#if searchResult.hits.length > 0}
+							{#each searchResult.hits as hit (hit.id)}
+								{@const _formatted = hit._formatted || {}}
+								{@const firstMatch = getFirstMatch(hit)}
+								<Table.Row
+									class={previewEmailId === hit.id ? 'bg-muted/70' : ''}
+									onclick={() => selectPreview(hit.id)}
+								>
+									{#if isColumnVisible('date')}
+										<Table.Cell class="text-muted-foreground text-xs">
+											{#if !isMounted}
+												<Skeleton class="h-4 w-32" />
+											{:else}
+												{formatDate(hit.timestamp)}
+											{/if}
+										</Table.Cell>
+									{/if}
+									<Table.Cell class="max-w-[520px]">
+										{#if !isMounted}
+											<Skeleton class="h-5 w-3/4" />
+										{:else}
+											<button
+												type="button"
+												class="text-foreground block max-w-full truncate text-left font-medium hover:underline"
+												aria-label={`Preview email: ${hit.subject || 'No subject'}`}
+												onclick={(event) => {
+													event.stopPropagation();
+													selectPreview(hit.id);
+												}}
+											>
+												<span use:shadowRender={_formatted.subject || hit.subject}></span>
+											</button>
+											{#if firstMatch}
+												<div class="mt-1 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2 text-xs">
+													<span class="text-muted-foreground">{firstMatch.label}:</span>
+													<span
+														class="text-muted-foreground min-w-0 font-mono"
+														use:shadowRender={firstMatch.snippet}
+													></span>
+												</div>
+											{/if}
+										{/if}
+									</Table.Cell>
+									{#if isColumnVisible('from')}
+										<Table.Cell class="max-w-[220px] text-sm">
+											{#if !isMounted}
+												<Skeleton class="h-4 w-36" />
+											{:else}
+												<span use:shadowRender={_formatted.from || hit.from}></span>
+											{/if}
+										</Table.Cell>
+									{/if}
+									{#if isColumnVisible('to')}
+										<Table.Cell class="max-w-[260px] text-sm">
+											{#if !isMounted}
+												<Skeleton class="h-4 w-40" />
+											{:else}
+												<span
+													use:shadowRender={_formatted.to?.join(', ') ||
+														formatRecipients(hit.to)}
+												></span>
+											{/if}
+										</Table.Cell>
+									{/if}
+									{#if isColumnVisible('mailbox')}
+										<Table.Cell class="max-w-[220px] truncate text-sm">
+											{hit.userEmail || '-'}
+										</Table.Cell>
+									{/if}
+									{#if isColumnVisible('attachments')}
+										<Table.Cell class="text-muted-foreground text-sm">
+											{hit.attachments?.length || 0}
+										</Table.Cell>
+									{/if}
+									<Table.Cell class="text-right">
+										<a
+											href="/dashboard/archived-emails/{hit.id}"
+											onclick={(event) => event.stopPropagation()}
+										>
+											<Button variant="outline" size="sm">Open</Button>
+										</a>
+									</Table.Cell>
+								</Table.Row>
+							{/each}
+						{:else}
+							<Table.Row>
+								<Table.Cell colspan={getColumnCount()} class="text-center">
+									{$t('app.search.found_results', { total: 0 } as any)}
 								</Table.Cell>
 							</Table.Row>
-						{/each}
-					{:else}
-						<Table.Row>
-							<Table.Cell colspan={7} class="text-center">
-								{$t('app.search.found_results', { total: 0 } as any)}
-							</Table.Cell>
-						</Table.Row>
-					{/if}
-				</Table.Body>
-			</Table.Root>
+						{/if}
+					</Table.Body>
+				</Table.Root>
+			</div>
+
+			{#if previewEmailId}
+				<aside class="mt-4 rounded-md border xl:sticky xl:top-4 xl:mt-0 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
+					<div class="flex items-start justify-between gap-3 border-b p-3">
+						<div class="min-w-0">
+							<p class="text-sm font-medium">Preview</p>
+							<p class="text-muted-foreground truncate text-xs">
+								{previewEmail?.subject || 'Loading email...'}
+							</p>
+						</div>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							class="h-8 w-8"
+							aria-label="Close preview"
+							onclick={closePreview}
+						>
+							<X class="h-4 w-4" />
+						</Button>
+					</div>
+					<div class="space-y-3 p-3">
+						{#if previewLoading}
+							<Skeleton class="h-5 w-3/4" />
+							<Skeleton class="h-4 w-1/2" />
+							<Skeleton class="h-[420px] w-full" />
+						{:else if previewError}
+							<Alert.Root variant="destructive">
+								<CircleAlertIcon class="size-4" />
+								<Alert.Title>{$t('app.search.error')}</Alert.Title>
+								<Alert.Description>{previewError}</Alert.Description>
+							</Alert.Root>
+						{:else if previewEmail}
+							<div class="space-y-1">
+								<h2 class="truncate text-base font-semibold">
+									{previewEmail.subject || $t('app.archive.no_subject')}
+								</h2>
+								<p class="text-muted-foreground text-xs">
+									{$t('app.archive.from')}: {previewEmail.senderEmail ||
+										previewEmail.senderName}
+								</p>
+								<p class="text-muted-foreground text-xs">
+									{$t('app.archive.sent')}: {new Date(
+										previewEmail.sentAt
+									).toLocaleString()}
+								</p>
+								<p class="text-muted-foreground truncate text-xs">
+									{$t('app.archive.to')}: {previewEmail.recipients
+										.map((recipient) => recipient.email || recipient.name)
+										.join(', ')}
+								</p>
+							</div>
+							<EmailPreview raw={previewEmail.raw} />
+						{/if}
+					</div>
+				</aside>
+			{/if}
 		</div>
 
 		{#if searchResult.total > searchResult.limit}

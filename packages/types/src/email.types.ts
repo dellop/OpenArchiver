@@ -75,6 +75,7 @@ export interface EmailDocument {
 	userEmail: string;
 	from: string;
 	to: string[];
+	toSort: string;
 	cc: string[];
 	bcc: string[];
 	subject: string;
@@ -83,6 +84,7 @@ export interface EmailDocument {
 		filename: string;
 		content: string; // Extracted text from the attachment
 	}[];
+	attachmentCount: number;
 	timestamp: number;
 	ingestionSourceId: string;
 	// other metadata

@@ -1,6 +1,14 @@
 import type { EmailDocument } from './email.types';
 
 export type MatchingStrategy = 'last' | 'all' | 'frequency';
+export type SearchSortBy =
+	| 'timestamp'
+	| 'subject'
+	| 'from'
+	| 'toSort'
+	| 'userEmail'
+	| 'attachmentCount';
+export type SearchSortDirection = 'asc' | 'desc';
 
 export interface SearchQuery {
 	query: string;
@@ -13,6 +21,8 @@ export interface SearchQuery {
 	page?: number;
 	limit?: number;
 	matchingStrategy?: MatchingStrategy;
+	sortBy?: SearchSortBy;
+	sortDirection?: SearchSortDirection;
 }
 
 export interface SearchHit extends EmailDocument {
