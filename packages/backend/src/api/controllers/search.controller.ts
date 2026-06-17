@@ -82,7 +82,7 @@ export class SearchController {
 					attributesToSearchOn: SEARCHABLE_ATTRIBUTES,
 					fieldQueries: fieldSearch,
 					page: this.getPositiveInteger(page, 1),
-					limit: Math.min(this.getPositiveInteger(limit, 10), 100),
+					limit: Math.min(this.getPositiveInteger(limit, 25), 500),
 					matchingStrategy: safeMatchingStrategy as MatchingStrategies,
 				},
 				userId,

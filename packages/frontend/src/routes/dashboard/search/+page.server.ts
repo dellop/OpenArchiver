@@ -17,11 +17,26 @@ const SEARCH_PARAM_NAMES = [
 	'dateFrom',
 	'dateTo',
 	'matchingStrategy',
+	'limit',
 ] as const;
 
-async function performSearch(searchParams: URLSearchParams, page: number, event: RequestEvent) {
+const DEFAULT_LIMIT = 25;
+const MAX_LIMIT = 500;
+
+function getPageLimit(searchParams: URLSearchParams) {
+	const parsed = parseInt(searchParams.get('limit') || `${DEFAULT_LIMIT}`, 10);
+	if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_LIMIT;
+	return Math.min(parsed, MAX_LIMIT);
+}
+
+async function performSearch(
+	searchParams: URLSearchParams,
+	page: number,
+	limit: number,
+	event: RequestEvent
+) {
 	const hasCriteria = SEARCH_PARAM_NAMES.some((name) => {
-		if (name === 'matchingStrategy') return false;
+		if (name === 'matchingStrategy' || name === 'limit') return false;
 		return Boolean(searchParams.get(name)?.trim());
 	});
 	const matchingStrategy = (searchParams.get('matchingStrategy') || 'last') as MatchingStrategy;
@@ -31,6 +46,7 @@ async function performSearch(searchParams: URLSearchParams, page: number, event:
 			searchResult: null,
 			searchParams: Object.fromEntries(searchParams),
 			page: 1,
+			limit,
 			matchingStrategy,
 		};
 	}
@@ -44,7 +60,7 @@ async function performSearch(searchParams: URLSearchParams, page: number, event:
 			}
 		}
 		params.set('page', page.toString());
-		params.set('limit', '10');
+		params.set('limit', limit.toString());
 
 		const response = await api(`/search?${params.toString()}`, event, {
 			method: 'GET',
@@ -56,6 +72,7 @@ async function performSearch(searchParams: URLSearchParams, page: number, event:
 				searchResult: null,
 				searchParams: Object.fromEntries(searchParams),
 				page,
+				limit,
 				matchingStrategy,
 				error: error.message,
 			};
@@ -66,6 +83,7 @@ async function performSearch(searchParams: URLSearchParams, page: number, event:
 			searchResult,
 			searchParams: Object.fromEntries(searchParams),
 			page,
+			limit,
 			matchingStrategy,
 		};
 	} catch (error) {
@@ -73,6 +91,7 @@ async function performSearch(searchParams: URLSearchParams, page: number, event:
 			searchResult: null,
 			searchParams: Object.fromEntries(searchParams),
 			page,
+			limit,
 			matchingStrategy,
 			error: error instanceof Error ? error.message : 'Unknown error',
 		};
@@ -81,5 +100,6 @@ async function performSearch(searchParams: URLSearchParams, page: number, event:
 
 export const load: PageServerLoad = async (event) => {
 	const page = parseInt(event.url.searchParams.get('page') || '1');
-	return performSearch(event.url.searchParams, page, event);
+	const limit = getPageLimit(event.url.searchParams);
+	return performSearch(event.url.searchParams, page, limit, event);
 };

@@ -3,13 +3,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import * as Select from '$lib/components/ui/select';
-	import {
-		Card,
-		CardContent,
-		CardHeader,
-		CardTitle,
-		CardDescription,
-	} from '$lib/components/ui/card';
+	import * as Table from '$lib/components/ui/table';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { Skeleton } from '$lib/components/ui/skeleton';
@@ -37,6 +31,7 @@
 	let dateFrom = $state(data.searchParams?.dateFrom || '');
 	let dateTo = $state(data.searchParams?.dateTo || '');
 	let page = $derived(data.page);
+	let limit = $state(data.limit?.toString() || data.searchParams?.limit || '25');
 	let error = $derived(data.error);
 	let matchingStrategy: MatchingStrategy = $state(
 		(data.matchingStrategy as MatchingStrategy) || 'last'
@@ -65,6 +60,7 @@
 		strategies.find((s) => s.value === matchingStrategy)?.label ??
 			$t('app.search.select_strategy')
 	);
+	const MAX_PAGE_SIZE = 500;
 
 	let isMounted = $state(false);
 	onMount(() => {
@@ -76,7 +72,11 @@
 
 		const shadow = node.attachShadow({ mode: 'open' });
 		const style = document.createElement('style');
-		style.textContent = `em { background-color: #fde047; font-style: normal; color: #1f2937; }`; // yellow-300, gray-800
+		style.textContent = `
+			:host { display: block; min-width: 0; }
+			div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+			em { background-color: #fde047; font-style: normal; color: #1f2937; }
+		`; // yellow-300, gray-800
 		shadow.appendChild(style);
 		const content = document.createElement('div');
 		content.innerHTML = html;
@@ -118,7 +118,21 @@
 		setParam(params, 'dateFrom', dateFrom);
 		setParam(params, 'dateTo', dateTo);
 		params.set('matchingStrategy', matchingStrategy);
+		params.set('limit', clampLimit(limit).toString());
 		return params;
+	}
+
+	function clampLimit(value: string | number) {
+		const parsed = typeof value === 'number' ? value : parseInt(value, 10);
+		if (!Number.isInteger(parsed) || parsed < 1) return 25;
+		return Math.min(parsed, MAX_PAGE_SIZE);
+	}
+
+	function applyPageSize() {
+		limit = clampLimit(limit).toString();
+		const params = buildSearchParams();
+		params.set('page', '1');
+		goto(`/dashboard/search?${params.toString()}`, { keepFocus: true });
 	}
 
 	function pageHref(nextPage: number) {
@@ -206,6 +220,39 @@
 		}
 
 		return snippets;
+	}
+
+	function getFirstMatch(hit: NonNullable<typeof searchResult>['hits'][number]) {
+		const formatted = hit._formatted || {};
+		const bodySnippet = getHighlightedSnippets(formatted.body, 70)[0];
+		if (bodySnippet) {
+			return {
+				label: $t('app.search.in_email_body'),
+				snippet: bodySnippet,
+			};
+		}
+
+		for (const attachment of formatted.attachments || []) {
+			const snippet = getHighlightedSnippets(attachment?.content, 70)[0];
+			if (snippet) {
+				return {
+					label: $t('app.search.in_attachment', {
+						filename: attachment.filename || $t('app.search.attachment_filename'),
+					} as any),
+					snippet,
+				};
+			}
+		}
+
+		return null;
+	}
+
+	function formatRecipients(recipients: string[] | undefined) {
+		return recipients?.filter(Boolean).join(', ') || '-';
+	}
+
+	function formatDate(timestamp: number) {
+		return new Date(timestamp).toLocaleString();
 	}
 </script>
 
@@ -349,122 +396,128 @@
 			</div>
 		{/if}
 
-		<p class="text-muted-foreground mb-4">
-			{#if searchResult.total > 0}
-				{$t('app.search.found_results_in', {
-					total: searchResult.total,
-					seconds: searchResult.processingTimeMs / 1000,
-				} as any)}
-			{:else}
-				{$t('app.search.found_results', { total: searchResult.total } as any)}
-			{/if}
-		</p>
+		<div class="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+			<p class="text-muted-foreground text-sm">
+				{#if searchResult.total > 0}
+					{$t('app.search.found_results_in', {
+						total: searchResult.total,
+						seconds: searchResult.processingTimeMs / 1000,
+					} as any)}
+				{:else}
+					{$t('app.search.found_results', { total: searchResult.total } as any)}
+				{/if}
+			</p>
+			<div class="flex items-center gap-2">
+				<label for="search-page-size" class="text-muted-foreground text-sm">
+					Rows
+				</label>
+				<Input
+					id="search-page-size"
+					type="number"
+					min="1"
+					max={MAX_PAGE_SIZE}
+					class="h-9 w-24"
+					bind:value={limit}
+					onkeydown={(event) => {
+						if (event.key === 'Enter') {
+							event.preventDefault();
+							applyPageSize();
+						}
+					}}
+				/>
+				<Button type="button" variant="outline" class="h-9" onclick={applyPageSize}>
+					Apply
+				</Button>
+			</div>
+		</div>
 
-		<div class="grid gap-4">
-			{#each searchResult.hits as hit}
-				{@const _formatted = hit._formatted || {}}
-				<a href="/dashboard/archived-emails/{hit.id}" class="block">
-					<Card>
-						<CardHeader>
-							<CardTitle>
-								{#if !isMounted}
-									<Skeleton class="h-6 w-3/4" />
-								{:else}
-									<div use:shadowRender={_formatted.subject || hit.subject}></div>
-								{/if}
-							</CardTitle>
-							<CardDescription
-								class="divide-forground flex flex-wrap items-center space-x-2 divide-x"
-							>
-								<span class="pr-2">
-									<span>{$t('app.search.from')}:</span>
+		<div class="rounded-md border">
+			<Table.Root>
+				<Table.Header>
+					<Table.Row>
+						<Table.Head class="w-[180px]">Date</Table.Head>
+						<Table.Head class="min-w-[320px]">{$t('app.search.subject')}</Table.Head>
+						<Table.Head class="w-[220px]">{$t('app.search.from')}</Table.Head>
+						<Table.Head class="w-[260px]">{$t('app.search.to')}</Table.Head>
+						<Table.Head class="w-[220px]">Mailbox</Table.Head>
+						<Table.Head class="w-[110px]">Attachments</Table.Head>
+						<Table.Head class="w-[90px] text-right">Actions</Table.Head>
+					</Table.Row>
+				</Table.Header>
+				<Table.Body>
+					{#if searchResult.hits.length > 0}
+						{#each searchResult.hits as hit (hit.id)}
+							{@const _formatted = hit._formatted || {}}
+							{@const firstMatch = getFirstMatch(hit)}
+							<Table.Row>
+								<Table.Cell class="text-muted-foreground text-xs">
 									{#if !isMounted}
-										<span class="bg-accent h-4 w-40 animate-pulse rounded-md"
-										></span>
+										<Skeleton class="h-4 w-32" />
 									{:else}
-										<span
-											class="inline-block"
-											use:shadowRender={_formatted.from || hit.from}
-										></span>
+										{formatDate(hit.timestamp)}
 									{/if}
-								</span>
-								<span class="pr-2">
-									<span>{$t('app.search.to')}:</span>
+								</Table.Cell>
+								<Table.Cell class="max-w-[520px]">
 									{#if !isMounted}
-										<span class="bg-accent h-4 w-40 animate-pulse rounded-md"
-										></span>
+										<Skeleton class="h-5 w-3/4" />
 									{:else}
-										<span
-											class="inline-block"
-											use:shadowRender={_formatted.to?.join(', ') ||
-												hit.to.join(', ')}
-										></span>
-									{/if}
-								</span>
-								<span>
-									{#if !isMounted}
-										<span class="bg-accent h-4 w-40 animate-pulse rounded-md"
-										></span>
-									{:else}
-										<span class="inline-block">
-											{new Date(hit.timestamp).toLocaleString()}
-										</span>
-									{/if}
-								</span>
-							</CardDescription>
-						</CardHeader>
-						<CardContent class="space-y-2">
-							<!-- Body matches -->
-							{#if _formatted.body}
-								{#each getHighlightedSnippets(_formatted.body) as snippet}
-									<div
-										class="space-y-2 rounded-md bg-slate-100 p-2 dark:bg-slate-800"
-									>
-										<p class="text-sm text-gray-500">
-											{$t('app.search.in_email_body')}:
-										</p>
-										{#if !isMounted}
-											<Skeleton class="my-2 h-5 w-full bg-gray-200" />
-										{:else}
-											<p
-												class="font-mono text-sm"
-												use:shadowRender={snippet}
-											></p>
-										{/if}
-									</div>
-								{/each}
-							{/if}
-
-							<!-- Attachment matches -->
-							{#if _formatted.attachments}
-								{#each _formatted.attachments as attachment, i}
-									{#if attachment && attachment.content}
-										{#each getHighlightedSnippets(attachment.content) as snippet}
-											<div
-												class="space-y-2 rounded-md bg-slate-100 p-2 dark:bg-slate-800"
-											>
-												<p class="text-sm text-gray-500">
-													{$t('app.search.in_attachment', {
-														filename: attachment.filename,
-													} as any)}
-												</p>
-												{#if !isMounted}
-													<Skeleton class="my-2 h-5 w-full bg-gray-200" />
-												{:else}
-													<p
-														class="font-mono text-sm"
-														use:shadowRender={snippet}
-													></p>
-												{/if}
+										<a
+											class="text-foreground block truncate font-medium hover:underline"
+											href="/dashboard/archived-emails/{hit.id}"
+											aria-label={`Open email: ${hit.subject || 'No subject'}`}
+										>
+											<span use:shadowRender={_formatted.subject || hit.subject}></span>
+										</a>
+										{#if firstMatch}
+											<div class="mt-1 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2 text-xs">
+												<span class="text-muted-foreground">{firstMatch.label}:</span>
+												<span
+													class="min-w-0 font-mono text-muted-foreground"
+													use:shadowRender={firstMatch.snippet}
+												></span>
 											</div>
-										{/each}
+										{/if}
 									{/if}
-								{/each}
-							{/if}
-						</CardContent>
-					</Card>
-				</a>
-			{/each}
+								</Table.Cell>
+								<Table.Cell class="max-w-[220px] text-sm">
+									{#if !isMounted}
+										<Skeleton class="h-4 w-36" />
+									{:else}
+										<span use:shadowRender={_formatted.from || hit.from}></span>
+									{/if}
+								</Table.Cell>
+								<Table.Cell class="max-w-[260px] text-sm">
+									{#if !isMounted}
+										<Skeleton class="h-4 w-40" />
+									{:else}
+										<span
+											use:shadowRender={_formatted.to?.join(', ') ||
+												formatRecipients(hit.to)}
+										></span>
+									{/if}
+								</Table.Cell>
+								<Table.Cell class="max-w-[220px] truncate text-sm">
+									{hit.userEmail || '-'}
+								</Table.Cell>
+								<Table.Cell class="text-muted-foreground text-sm">
+									{hit.attachments?.length || 0}
+								</Table.Cell>
+								<Table.Cell class="text-right">
+									<a href="/dashboard/archived-emails/{hit.id}">
+										<Button variant="outline" size="sm">Open</Button>
+									</a>
+								</Table.Cell>
+							</Table.Row>
+						{/each}
+					{:else}
+						<Table.Row>
+							<Table.Cell colspan={7} class="text-center">
+								{$t('app.search.found_results', { total: 0 } as any)}
+							</Table.Cell>
+						</Table.Row>
+					{/if}
+				</Table.Body>
+			</Table.Root>
 		</div>
 
 		{#if searchResult.total > searchResult.limit}
